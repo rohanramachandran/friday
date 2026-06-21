@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>LSUIElement</key>
+    <true/>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>FRIDAY needs microphone access for voice commands.</string>
+    <key>NSScreenCaptureUsageDescription</key>
+    <string>FRIDAY captures your screen when you ask it to look at something.</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>FRIDAY uses AppleScript to control apps on your behalf.</string>
+</dict>
+</plist>
