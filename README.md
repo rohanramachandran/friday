@@ -11,6 +11,7 @@ Local voice AI assistant for macOS. Everything runs on-device: speech recognitio
 - **STT**: whisper.cpp small.en (Metal-accelerated)
 - **TTS**: Kokoro-82M, streamed sentence by sentence for low perceived latency
 - **Tools**: screen capture, Python execution, AppleScript system control, web search, conversation memory search
+- **Serving**: FastAPI `/generate` endpoint with SSE streaming, request queuing, and continuous batching, so concurrent generations share the decode loop
 - **Memory**: working context with automatic compaction, plus embedding retrieval over past conversations
 - **Frontends**: native SwiftUI menu bar app with global hotkeys, and a terminal client with wake-word listening
 
@@ -60,6 +61,24 @@ Type a question, or say "Friday" followed by a command. For the menu bar app, se
 - **Hold Option+Shift+Space**: push-to-talk with a screenshot attached
 - **Menu bar icon**: toggle the overlay
 
+## Serving API
+
+Besides the voice daemon, the same model can be served over HTTP:
+
+```bash
+./scripts/serve.sh           # loads the model, serves on 127.0.0.1:8080
+```
+
+```bash
+curl -N http://127.0.0.1:8080/generate \
+  -H 'Content-Type: application/json' \
+  -d '{"prompt": "What is a limit order book?", "max_tokens": 128}'
+```
+
+Responses stream as server-sent events; pass `"stream": false` for a single JSON body. Requests accept `temperature`, `top_p`, and `max_tokens` per call.
+
+Under the hood a scheduler thread owns the MLX engine and admits new requests into the running batch at token boundaries (continuous batching, built on `mlx_lm`'s `BatchGenerator`). Each request streams back through its own queue, client disconnects cancel the sequence and free its batch slot, and the scheduler applies backpressure with HTTP 503 once it is at capacity.
+
 ## Tests
 
 ```bash
@@ -67,7 +86,7 @@ pip install pytest
 pytest tests/
 ```
 
-The suite covers tool-call parsing, streaming sentence segmentation, memory compaction, and the code execution sandbox. Model inference paths are exercised manually, not in CI.
+The suite covers tool-call parsing, streaming sentence segmentation, memory compaction, the code execution sandbox, and the serving layer (concurrent streams, continuous admission, cancellation, backpressure) against a fake engine that mirrors the batching contract. Model inference paths are exercised manually, not in CI.
 
 ## Benchmarks
 
