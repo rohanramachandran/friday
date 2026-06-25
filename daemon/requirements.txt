@@ -11,3 +11,5 @@ einops>=0.8
 sounddevice>=0.4
 rich>=13.0
 silero-vad>=5.0
+fastapi>=0.115
+uvicorn>=0.30
