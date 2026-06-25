@@ -184,8 +184,10 @@ class Brain:
             log.warning(f"TOOL {name} returned {len(str(result))} chars")
             tool_results.append(f"Tool {name} returned:\n{result}")
 
-        # ---- Phase 2: forced summary if we have tool results ----
-        if tool_results:
+        # ---- Phase 2: forced summary, only if phase 1 never produced an answer ----
+        # (phase 1 already streams the model's post-tool answer; regenerating here
+        # would say everything twice)
+        if tool_results and not full_response:
             log.warning(f"FORCING SUMMARY over {len(tool_results)} tool result(s)")
             prompt = self._build_prompt(user_text, screenshot_b64, tool_results)
 
