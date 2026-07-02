@@ -24,20 +24,23 @@ class FakeEngine:
         self._active = {}  # uid -> dict(next, remaining, sampler)
         self.removed = []
         self.inserted_samplers = []
+        self.inserted_state_machines = []
         self.closed = False
         self.eos_token = eos_token
         self.steps = 0
 
-    def insert(self, prompts: List[List[int]], max_tokens=None, samplers=None):
+    def insert(self, prompts: List[List[int]], max_tokens=None, samplers=None, state_machines=None):
         uids = []
         max_tokens = max_tokens or [128] * len(prompts)
         samplers = samplers or [None] * len(prompts)
-        for prompt, m, s in zip(prompts, max_tokens, samplers):
+        state_machines = state_machines or [None] * len(prompts)
+        for prompt, m, s, sm in zip(prompts, max_tokens, samplers, state_machines):
             uid = self._uid
             self._uid += 1
             # deterministic script: tokens count up from the last prompt token
             self._active[uid] = {"next": prompt[-1] + 1, "remaining": m}
             self.inserted_samplers.append((uid, s))
+            self.inserted_state_machines.append((uid, sm))
             uids.append(uid)
         return uids
 

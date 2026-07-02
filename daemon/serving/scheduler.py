@@ -40,12 +40,13 @@ _END = _End()
 
 
 class _Request:
-    __slots__ = ("tokens", "max_tokens", "sampler", "queue", "loop", "uid", "dead", "finished")
+    __slots__ = ("tokens", "max_tokens", "sampler", "state_machine", "queue", "loop", "uid", "dead", "finished")
 
-    def __init__(self, tokens: List[int], max_tokens: int, sampler: Any, loop):
+    def __init__(self, tokens: List[int], max_tokens: int, sampler: Any, loop, state_machine: Any = None):
         self.tokens = tokens
         self.max_tokens = max_tokens
         self.sampler = sampler
+        self.state_machine = state_machine
         self.loop = loop
         self.queue: asyncio.Queue = asyncio.Queue()
         self.uid: Optional[int] = None
@@ -91,12 +92,14 @@ class Scheduler:
 
     # ---- asyncio side ----
 
-    async def submit(self, prompt_tokens: List[int], max_tokens: int = 256, sampler=None) -> StreamHandle:
+    async def submit(self, prompt_tokens: List[int], max_tokens: int = 256, sampler=None,
+                     state_machine=None) -> StreamHandle:
         with self._lock:
             if self._live >= self.max_pending:
                 raise SchedulerFull(f"{self._live} live requests, limit {self.max_pending}")
             self._live += 1
-        request = _Request(list(prompt_tokens), max_tokens, sampler, asyncio.get_running_loop())
+        request = _Request(list(prompt_tokens), max_tokens, sampler,
+                           asyncio.get_running_loop(), state_machine)
         self._pending.put(request)
         return StreamHandle(request, self)
 
@@ -187,14 +190,25 @@ class Scheduler:
         new = [r for r in new if not r.dead]
         if not new:
             return
-        uids = self.engine.insert(
-            [r.tokens for r in new],
-            [r.max_tokens for r in new],
-            samplers=[r.sampler for r in new],
-        )
-        for request, uid in zip(new, uids):
-            request.uid = uid
-            self._active[uid] = request
+        # requests with a custom stop machine are inserted separately, so plain
+        # requests keep the engine's default machine
+        for group, machines in (
+            ([r for r in new if r.state_machine is None], None),
+            ([r for r in new if r.state_machine is not None], True),
+        ):
+            if not group:
+                continue
+            kwargs = {"samplers": [r.sampler for r in group]}
+            if machines:
+                kwargs["state_machines"] = [r.state_machine for r in group]
+            uids = self.engine.insert(
+                [r.tokens for r in group],
+                [r.max_tokens for r in group],
+                **kwargs,
+            )
+            for request, uid in zip(group, uids):
+                request.uid = uid
+                self._active[uid] = request
 
     def _step(self):
         for response in self.engine.next_generated():

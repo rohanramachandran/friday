@@ -122,6 +122,30 @@ def test_empty_prompt_rejected():
     run(go())
 
 
+def test_ignore_eos_sends_no_stop_machine_to_engine():
+    async def go():
+        engine = FakeEngine()
+        sched = Scheduler(engine)
+        sched.start()
+        marker = object()
+        app = create_app(sched, FakeTokenizer(),
+                         sampler_factory=lambda temperature, top_p: None,
+                         no_stop_machine_factory=lambda: marker)
+        transport = httpx.ASGITransport(app=app)
+        client = httpx.AsyncClient(transport=transport, base_url="http://test")
+        try:
+            r = await client.post("/generate", json={
+                "prompt": "d", "max_tokens": 3, "stream": False,
+                "template": False, "ignore_eos": True})
+            assert r.status_code == 200
+            machines = [sm for _, sm in engine.inserted_state_machines]
+            assert marker in machines
+        finally:
+            await client.aclose()
+            sched.stop()
+    run(go())
+
+
 def test_health():
     async def go():
         client, sched, _ = make_client()

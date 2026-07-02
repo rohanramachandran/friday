@@ -25,6 +25,7 @@ class GenerateRequest(BaseModel):
     top_p: float = Field(default=0.9, gt=0.0, le=1.0)
     stream: bool = True
     template: bool = True  # wrap the prompt with the model's chat template
+    ignore_eos: bool = False  # generate exactly max_tokens; for benchmarking
 
 
 class IncrementalDecoder:
@@ -45,12 +46,18 @@ class IncrementalDecoder:
         return delta
 
 
-def create_app(scheduler: Scheduler, tokenizer, sampler_factory=None) -> FastAPI:
+def create_app(scheduler: Scheduler, tokenizer, sampler_factory=None,
+               no_stop_machine_factory=None) -> FastAPI:
     if sampler_factory is None:
         from mlx_lm.sample_utils import make_sampler
 
         def sampler_factory(temperature, top_p):
             return make_sampler(temp=temperature, top_p=top_p)
+
+    if no_stop_machine_factory is None:
+        def no_stop_machine_factory():
+            from mlx_lm.generate import SequenceStateMachine
+            return SequenceStateMachine()
 
     app = FastAPI(title="FRIDAY serving", docs_url=None, redoc_url=None)
 
@@ -68,9 +75,11 @@ def create_app(scheduler: Scheduler, tokenizer, sampler_factory=None) -> FastAPI
     async def generate(req: GenerateRequest):
         prompt_tokens = encode_prompt(req)
         sampler = sampler_factory(temperature=req.temperature, top_p=req.top_p)
+        state_machine = no_stop_machine_factory() if req.ignore_eos else None
         try:
             handle = await scheduler.submit(
-                prompt_tokens, max_tokens=req.max_tokens, sampler=sampler)
+                prompt_tokens, max_tokens=req.max_tokens, sampler=sampler,
+                state_machine=state_machine)
         except SchedulerFull:
             raise HTTPException(status_code=503, detail="server busy")
 
@@ -122,11 +131,17 @@ def create_app(scheduler: Scheduler, tokenizer, sampler_factory=None) -> FastAPI
 
     @app.get("/health")
     async def health():
-        return {
+        body = {
             "status": "ok",
             "active": scheduler.active_count,
             "pending": scheduler.pending_count,
         }
+        try:
+            import mlx.core as mx
+            body["peak_memory_gb"] = round(mx.get_peak_memory() / 1e9, 3)
+        except ImportError:
+            pass
+        return body
 
     return app
 

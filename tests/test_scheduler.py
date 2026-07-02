@@ -146,6 +146,24 @@ def test_full_scheduler_rejects_submissions():
     run(go())
 
 
+def test_per_request_state_machine_reaches_engine():
+    async def go():
+        engine = FakeEngine()
+        sched = Scheduler(engine)
+        sched.start()
+        try:
+            machine = object()
+            with_machine = await sched.submit([100], max_tokens=2, state_machine=machine)
+            plain = await sched.submit([200], max_tokens=2)
+            await asyncio.gather(consume(with_machine), consume(plain))
+            by_uid = {uid: sm for uid, sm in engine.inserted_state_machines}
+            assert machine in by_uid.values(), "custom state machine must reach the engine"
+            assert None in by_uid.values(), "plain requests must not get a machine"
+        finally:
+            sched.stop()
+    run(go())
+
+
 def test_per_request_sampler_reaches_engine():
     async def go():
         engine = FakeEngine()
