@@ -90,7 +90,14 @@ The suite covers tool-call parsing, streaming sentence segmentation, memory comp
 
 ## Benchmarks
 
-The harness and raw results live in [benchmarks/](benchmarks/). Numbers published here are measured on the author's machine and committed with the raw output.
+Measured on this machine: Apple M5, 24 GB unified memory, macOS 26.5.1. Qwen3-14B at 4-bit, greedy decoding, exactly 128 tokens per request, medians across 3 runs per engine. Baseline: llama.cpp build 10050 serving the same model as Q4_K_M with 8 parallel slots.
+
+| Engine | 1 stream tok/s | 4 streams tok/s | 8 streams tok/s | TTFT p50 s | Peak memory GB |
+|---|---|---|---|---|---|
+| FRIDAY | 14.2 | 39.7 | 42.2 | 0.33 | 8.8 |
+| llama.cpp | 13.2 | 30.4 | 32.6 | 0.27 | 11.7 |
+
+Continuous batching is where the serving layer earns its keep: at 8 concurrent streams FRIDAY sustains 3x its own single-stream throughput and 1.3x llama.cpp's aggregate at the same concurrency, with single-stream decode within a few percent of the baseline. Full latency tables, caveats (the 4-bit quantization schemes differ, and memory accounting differs per runtime), the harness, and raw per-request records are in [benchmarks/](benchmarks/).
 
 ## Limitations
 

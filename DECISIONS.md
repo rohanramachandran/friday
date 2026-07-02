@@ -1,5 +1,12 @@
 # Decisions
 
+## 2026-07-19 (benchmarks)
+
+- Benchmarks run greedy with EOS ignored so both engines do identical fixed-length work; without this, output-length differences between quantization schemes would contaminate every latency percentile. ignore_eos is a real API flag (a per-request no-stop state machine through the scheduler), not a fork of the server.
+- Peak memory is reported per engine with its best-available accounting: MLX's peak GPU allocation for FRIDAY (Metal buffers never appear in process RSS, which reads a misleading 0.4 GB) and peak RSS for llama.cpp (its weights are mmap'd and do appear). The discrepancy is documented rather than papered over.
+- Three runs per engine, engines run sequentially, never concurrently (24 GB machine). FRIDAY's runs overlapped the baseline model download (network-bound); accepted after confirming run 1 matched the earlier quiet-machine smoke test within 2 percent, and run-to-run spread stayed under 4 percent.
+- Result: FRIDAY at 8 streams sustains 1.3x llama.cpp's aggregate throughput on this workload; single-stream decode within a few percent; TTFT slightly behind (0.33s vs 0.27s p50). Raw per-request JSON committed under benchmarks/results/.
+
 ## 2026-07-19 (serving layer)
 
 - The HTTP serving layer is a second entrypoint beside the voice daemon, sharing the model id but not a process. The voice path is single-user and latency-bound; coupling it to the batch scheduler bought nothing yet, so that refactor is deferred until the daemon needs concurrent generation.
