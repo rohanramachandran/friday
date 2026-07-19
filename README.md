@@ -1,94 +1,81 @@
-<p align="center"><img src="docs/banner.svg" alt="FRIDAY" width="100%"></p>
+# FRIDAY
 
-<p align="center">
-  <img src="https://github.com/rohanramachandran/friday/actions/workflows/ci.yml/badge.svg" alt="tests">
-</p>
+![tests](https://github.com/rohanramachandran/friday/actions/workflows/ci.yml/badge.svg)
 
-Speech in, answer spoken back, tools in between. Everything runs on the
-laptop: no cloud, no API keys, works with WiFi off.
+FRIDAY is a voice assistant that runs entirely on a Mac. Speech recognition,
+the language model, tool execution, and speech synthesis all happen locally.
+It works with WiFi off.
 
-## Motivation
+## Why I built it
 
-I wanted an assistant I could talk to without streaming audio of my life to
-a data center. Everything FRIDAY hears, thinks, and says stays on my
-machine. Underneath that is the engineering question I actually cared
-about: how much assistant fits in 24 GB of laptop memory, and how fast can
-it feel?
-
-## Measured
-
-Qwen3-14B (4-bit) on an Apple M5, against a llama.cpp baseline serving the
-same model class. Greedy decoding, fixed 128-token generations, medians of
-3 runs. Raw output is committed in [benchmarks/results/](benchmarks/results/).
-
-<p align="center"><img src="benchmarks/throughput.png" alt="throughput" width="85%"></p>
-
-| | 1 stream | 4 streams | 8 streams | TTFT p50 | Peak memory |
-|---|---|---|---|---|---|
-| **FRIDAY** | 14.2 tok/s | 39.7 | **42.2** | 0.33 s | 8.8 GB |
-| llama.cpp | 13.2 tok/s | 30.4 | 32.6 | 0.27 s | 11.7 GB |
-
-Continuous batching is the win: 3x FRIDAY's own single-stream rate at 8
-concurrent streams, 1.3x llama.cpp's aggregate. llama.cpp is slightly
-faster to first token. Caveats (quantization schemes and memory accounting
-differ per runtime) are in [benchmarks/](benchmarks/).
+Partly privacy: I did not want a microphone that streams to a data center.
+Mostly to answer a concrete question: how capable an assistant fits in 24 GB
+of laptop memory, and what it takes to make local inference feel fast in a
+conversation.
 
 ## How it works
 
-```mermaid
-flowchart LR
-    subgraph app["Swift menu bar app"]
-        HK["Hotkeys + mic"] --> WSC["WebSocket client"]
-        WSC --> SPK["Speaker"]
-    end
-    WSC <--> WSS["WebSocket server (127.0.0.1)"]
-    subgraph daemon["Python daemon"]
-        WSS --> STT["whisper.cpp STT"]
-        STT --> BRAIN["Qwen3-14B brain (MLX)"]
-        BRAIN <--> TOOLS["screenshot, system, run_code, web_search, memory"]
-        BRAIN --> TTS["Kokoro TTS"]
-        TTS --> WSS
-    end
-```
+<img src="docs/architecture.svg" alt="architecture" width="100%">
 
-Three decisions carry the experience:
+A Swift menu bar app captures push-to-talk audio, optionally with a
+screenshot, and talks to a Python daemon over a local WebSocket. The daemon
+transcribes with whisper.cpp, generates with Qwen3-14B under MLX, and
+synthesizes speech with Kokoro. During generation the model can call tools:
+screen reading, AppleScript system control, Python execution, web search,
+and search over past conversations.
 
-- **Speak while thinking.** Tokens stream out of the model, get cut at
-  sentence boundaries, and each sentence is synthesized immediately, so
-  audio starts before the answer is finished.
-- **Read the screen cheaply.** Screen questions go through Apple's native
-  OCR plus the frontmost window title (about 100 ms, near-zero memory). A
-  vision model is loaded only for truly visual questions, then freed.
-- **One model, two frontends.** The voice daemon and an HTTP API share the
-  model. The API does continuous batching: a scheduler thread owns the MLX
-  engine, admits new requests at token boundaries, streams each response,
-  and sheds load with a 503 when full.
+Two decisions carry most of the perceived speed:
 
-## Run it
+- Speech starts before generation finishes. The token stream is cut at
+  sentence boundaries and each sentence is synthesized immediately.
+- Screen questions avoid the vision model when possible. Apple's OCR plus
+  the active window title answers most of them in about 100 ms. A vision
+  model is loaded only for questions about images or layout, then freed.
+
+The same model is also served over HTTP (`scripts/serve.sh`). The server
+does continuous batching: a scheduler thread owns the MLX engine, joins new
+requests into the running batch at token boundaries, and streams each
+response. Disconnecting cancels a request; a full queue returns 503.
+
+## Benchmarks
+
+Qwen3-14B 4-bit on an M5 MacBook, fixed 128-token greedy generations,
+medians of three runs. Baseline: llama.cpp build 10050 serving the same
+model as Q4_K_M. Raw output is committed in
+[benchmarks/results/](benchmarks/results/).
+
+<img src="benchmarks/throughput.png" alt="throughput" width="85%">
+
+| | 1 stream | 4 streams | 8 streams | first token p50 | peak memory |
+|---|---|---|---|---|---|
+| FRIDAY | 14.2 tok/s | 39.7 | 42.2 | 0.33 s | 8.8 GB |
+| llama.cpp | 13.2 tok/s | 30.4 | 32.6 | 0.27 s | 11.7 GB |
+
+Batching is where the gap opens: at eight concurrent streams FRIDAY reaches
+1.3x llama.cpp's aggregate throughput. Single-stream decode is within a few
+percent and llama.cpp reaches first token sooner. The two runtimes use
+different 4-bit quantization schemes and different memory accounting;
+details in [benchmarks/](benchmarks/).
+
+## Setup
 
 Apple Silicon, Python 3.11, Xcode command line tools.
 
 ```bash
 git clone https://github.com/rohanramachandran/friday && cd friday
-./scripts/setup.sh   # venv, deps, ~12 GB of model downloads
-./scripts/run.sh     # voice daemon on ws://127.0.0.1:8765
+./scripts/setup.sh    # venv, dependencies, ~12 GB of model downloads
+./scripts/run.sh      # daemon on ws://127.0.0.1:8765
+python scripts/cli.py # talk from the terminal
 ```
 
-Then `python scripts/cli.py` in another terminal to talk from the
-terminal, or build the menu bar app ([docs/app-setup.md](docs/app-setup.md)).
-The HTTP API is `./scripts/serve.sh`:
+Building the menu bar app: [docs/app-setup.md](docs/app-setup.md).
 
-```bash
-curl -N http://127.0.0.1:8080/generate \
-  -H 'Content-Type: application/json' \
-  -d '{"prompt": "What is a limit order book?", "max_tokens": 128}'
-```
-
-Tests (no model downloads needed): `pip install pytest && pytest tests/`
+Tests need no models: `pip install pytest && pytest tests/`
 
 ## Limitations
 
-- macOS and Apple Silicon only, by design: MLX, Apple Vision, AppleScript
-- The code tool runs Python in a subprocess with a timeout, not a sandbox
-- Web search scrapes DuckDuckGo and can break when the page changes
-- Wake-word listening transcribes a rolling window; simple, costs battery
+- macOS and Apple Silicon only: the stack is MLX, Apple Vision, AppleScript.
+- The code tool runs Python in a subprocess with a timeout, not a sandbox.
+- Web search scrapes DuckDuckGo and breaks when the page layout changes.
+- Wake-word listening transcribes a rolling audio window, which is simple
+  but costs battery.
